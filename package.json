@@ -1,11 +1,15 @@
 {
-  "name": "thumbnailjs",
+  "name": "@thumbnailjs/core",
   "version": "0.1.0",
   "description": "Tiny browser-only library that turns any file into a thumbnail",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Guillaume971/thumbnailjs"
+    "url": "git+https://github.com/thumbnailjs/core.git"
   },
+  "bugs": {
+    "url": "https://github.com/thumbnailjs/core/issues"
+  },
+  "homepage": "https://github.com/thumbnailjs/core#readme",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
