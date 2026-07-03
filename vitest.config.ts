@@ -137,13 +137,14 @@ export default defineConfig({
       providerOptions: {
         capabilities: {
           browserName: "chrome",
-          // Use the system chromedriver (matches /usr/bin/chromium) instead
-          // of downloading one per session — the download is slow/flaky.
-          "wdio:chromedriverOptions": {
-            binary: "/usr/bin/chromedriver",
-          },
+          // Browser and driver binaries are overridable via env vars so the
+          // suite runs on other machines and in CI, not just this box. When
+          // CHROMEDRIVER_BIN is unset, webdriverio manages a matching driver.
+          ...(process.env.CHROMEDRIVER_BIN
+            ? { "wdio:chromedriverOptions": { binary: process.env.CHROMEDRIVER_BIN } }
+            : {}),
           "goog:chromeOptions": {
-            binary: "/usr/bin/chromium",
+            binary: process.env.CHROME_BIN || "/usr/bin/chromium",
             args: [
               "--headless=new",
               "--no-sandbox",
