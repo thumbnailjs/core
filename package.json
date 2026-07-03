@@ -54,5 +54,8 @@
     "vitest": "^2.0.0",
     "webdriverio": "^9.27.0"
   },
+  "overrides": {
+    "undici": "^7.25.0"
+  },
   "sideEffects": false
 }
