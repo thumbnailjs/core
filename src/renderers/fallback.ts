@@ -1,11 +1,13 @@
 import type { RenderOptions } from "../types";
 import { createCanvas } from "../canvas";
 import { detect, familyColors } from "../detect";
+import { throwIfAborted } from "../abort";
 
 export async function renderFallback(
   file: Blob,
   opts: RenderOptions,
 ): Promise<HTMLCanvasElement> {
+  throwIfAborted(opts.signal);
   const sig = await detect(file);
   const w = opts.width;
   const h = opts.height ?? opts.width;

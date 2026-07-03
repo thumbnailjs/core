@@ -164,24 +164,60 @@ export function renderToCanvas(
 // ---------------------------------------------------------------------------
 
 /**
- * Convert an HTMLCanvasElement to a PNG Blob.
+ * Convert an HTMLCanvasElement to an encoded Blob (PNG by default).
  * Wraps `canvas.toBlob` in a Promise for ergonomic async usage.
+ *
+ * Per spec, engines that cannot encode the requested `type` silently fall
+ * back to PNG — check the returned Blob's `type`, or probe upfront with
+ * `canEncode()`.
  */
-export function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+export function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  type = 'image/png',
+  quality?: number,
+): Promise<Blob> {
   return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) {
-        resolve(blob);
-      } else {
-        reject(new Error('thumbnailjs: canvas.toBlob returned null'));
-      }
-    }, 'image/png');
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error('thumbnailjs: canvas.toBlob returned null'));
+        }
+      },
+      type,
+      quality,
+    );
   });
 }
 
 /**
- * Convert an HTMLCanvasElement to a PNG data-URL string.
+ * Convert an HTMLCanvasElement to an encoded data-URL string (PNG by
+ * default). Same silent-PNG-fallback caveat as `canvasToBlob`.
  */
-export function canvasToDataURL(canvas: HTMLCanvasElement): string {
-  return canvas.toDataURL('image/png');
+export function canvasToDataURL(
+  canvas: HTMLCanvasElement,
+  type = 'image/png',
+  quality?: number,
+): string {
+  return canvas.toDataURL(type, quality);
+}
+
+// Memoized per session — encoder support doesn't change at runtime.
+const encodeSupport = new Map<string, boolean>();
+
+/**
+ * Whether this engine's canvas encoder supports the given MIME type.
+ *
+ * Useful to pick an encoding before calling `thumbnail()`: e.g. WebP is
+ * supported by Chromium-based engines but not by all WebKit builds, which
+ * silently produce PNG instead.
+ */
+export function canEncode(type: string): boolean {
+  const cached = encodeSupport.get(type);
+  if (cached !== undefined) return cached;
+  const canvas = createCanvas(1, 1);
+  const supported = canvas.toDataURL(type).startsWith(`data:${type.toLowerCase()}`);
+  encodeSupport.set(type, supported);
+  return supported;
 }

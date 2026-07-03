@@ -3,99 +3,79 @@
 // ---------------------------------------------------------------------------
 
 import type { Renderer, RenderOptions } from "../types";
+import { abortError, throwIfAborted } from "../abort";
+import { config } from "../config";
 
 /** %PDF- magic bytes */
 const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46, 0x2d] as const;
 
-// Singleton promise so pdfjs-dist is loaded and configured exactly once.
+// Singleton promise so pdfjs-dist is loaded exactly once.
 let pdfjsPromise: Promise<typeof import("pdfjs-dist")> | null = null;
 
 function loadPdfjs(): Promise<typeof import("pdfjs-dist")> {
   if (!pdfjsPromise) {
-    pdfjsPromise = import("pdfjs-dist")
-      .then((pdfjs) => {
-        if (
-          typeof pdfjs.GlobalWorkerOptions !== "undefined" &&
-          !pdfjs.GlobalWorkerOptions.workerSrc
-        ) {
-          pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
-        }
-        return pdfjs;
-      })
-      .catch((err) => {
-        pdfjsPromise = null;
-        const error = new Error(
-          "thumbnailjs: pdfjs-dist is required for PDF thumbnails but failed to load. " +
-            "Install it with: npm install pdfjs-dist",
-        );
-        (error as any).cause = err;
-        throw error;
-      });
+    pdfjsPromise = import("pdfjs-dist").catch((err) => {
+      pdfjsPromise = null;
+      const error = new Error(
+        "thumbnailjs: pdfjs-dist is required for PDF thumbnails but failed to load. " +
+          "Install it with: npm install pdfjs-dist",
+      );
+      (error as any).cause = err;
+      throw error;
+    });
   }
   return pdfjsPromise;
 }
 
-const pdf: Renderer = {
-  name: "pdf",
+/**
+ * Resolve the worker script before each document load (not once at module
+ * load), so a late `thumbnail.configure({ pdfWorkerSrc })` still applies.
+ *
+ * Precedence: configure() > a workerSrc the host app set directly on
+ * GlobalWorkerOptions > the jsDelivr CDN default. Offline apps should
+ * configure a bundled copy — the CDN is unreachable there.
+ */
+function applyWorkerSrc(pdfjs: typeof import("pdfjs-dist")): void {
+  if (typeof pdfjs.GlobalWorkerOptions === "undefined") return;
+  if (config.pdfWorkerSrc) {
+    pdfjs.GlobalWorkerOptions.workerSrc = config.pdfWorkerSrc;
+  } else if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+    pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+  }
+}
 
-  async test(file: Blob): Promise<boolean> {
-    // Fast-path: MIME type check
-    if (file.type === "application/pdf") {
-      return true;
-    }
+/**
+ * Render the first page from either in-memory data or a URL. With a URL,
+ * pdf.js uses its range transport (when the server supports it) and, with
+ * `disableAutoFetch`, downloads only the chunks the first page needs.
+ */
+async function renderPdf(
+  source: { data: Uint8Array } | { url: string },
+  opts: RenderOptions,
+): Promise<HTMLCanvasElement> {
+  const pdfjsLib = await loadPdfjs();
+  applyWorkerSrc(pdfjsLib);
 
-    // Magic-byte sniffing: first 5 bytes must be %PDF-
-    try {
-      const slice = file.slice(0, 5);
-      const buf = new Uint8Array(await slice.arrayBuffer());
-      if (buf.length >= 5) {
-        return PDF_MAGIC.every((byte, i) => buf[i] === byte);
-      }
-    } catch {
-      // arrayBuffer() may fail on an empty blob or in restrictive
-      // environments – fall through to false.
-    }
+  const { width, height, fit, background, signal } = opts;
+  throwIfAborted(signal);
 
-    return false;
-  },
+  const loadingTask = pdfjsLib.getDocument({
+    ...source,
+    disableAutoFetch: true,
+    disableFontFace: false,
+  });
 
-  async render(file: Blob, opts: RenderOptions): Promise<HTMLCanvasElement> {
-    const pdfjsLib = await loadPdfjs();
+  // Abort during document load → tear the transport down. pdf.js then
+  // rejects with its own error; the catch below maps it to the abort reason.
+  const onLoadAbort = () => {
+    loadingTask.destroy();
+  };
+  signal?.addEventListener("abort", onLoadAbort, { once: true });
 
-    const { width, height, fit, background, signal } = opts;
-
-    // Abort early if already cancelled
-    if (signal?.aborted) {
-      throw signal.reason ?? new DOMException("Aborted", "AbortError");
-    }
-
-    // Load the PDF document
-    const arrayBuffer = await file.arrayBuffer();
-
-    if (signal?.aborted) {
-      throw signal.reason ?? new DOMException("Aborted", "AbortError");
-    }
-
-    const loadingTask = pdfjsLib.getDocument({
-      data: new Uint8Array(arrayBuffer),
-      disableAutoFetch: true,
-      disableFontFace: false,
-    });
-
-    // Wire up abort support
-    if (signal) {
-      const onAbort = () => {
-        loadingTask.destroy();
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
-
-    const pdfDoc = await loadingTask.promise;
-
-    if (signal?.aborted) {
-      await pdfDoc.destroy();
-      throw signal.reason ?? new DOMException("Aborted", "AbortError");
-    }
+  let pdfDoc: Awaited<typeof loadingTask.promise> | undefined;
+  try {
+    pdfDoc = await loadingTask.promise;
+    throwIfAborted(signal);
 
     // Render the first page
     const page = await pdfDoc.getPage(1);
@@ -147,21 +127,64 @@ const pdf: Renderer = {
     } as any);
 
     if (signal) {
-      const onAbort = () => {
+      const onRenderAbort = () => {
         renderTask.cancel();
       };
-      signal.addEventListener("abort", onAbort, { once: true });
+      signal.addEventListener("abort", onRenderAbort, { once: true });
       renderTask.promise.finally(() =>
-        signal.removeEventListener("abort", onAbort),
+        signal.removeEventListener("abort", onRenderAbort),
       );
     }
 
     await renderTask.promise;
-
-    // Clean up pdf.js resources
-    await pdfDoc.destroy();
-
     return canvas;
+  } catch (err) {
+    // pdf.js surfaces destroy()/cancel() as its own error types; report the
+    // caller's abort reason instead when the signal is what stopped us.
+    if (signal?.aborted) throw abortError(signal);
+    throw err;
+  } finally {
+    signal?.removeEventListener("abort", onLoadAbort);
+    // Free pdf.js resources without masking the outcome.
+    void pdfDoc?.destroy().catch(() => {});
+  }
+}
+
+const pdf: Renderer = {
+  name: "pdf",
+
+  async test(file: Blob): Promise<boolean> {
+    // Fast-path: MIME type check
+    if (file.type === "application/pdf") {
+      return true;
+    }
+
+    // Magic-byte sniffing: first 5 bytes must be %PDF-
+    try {
+      const slice = file.slice(0, 5);
+      const buf = new Uint8Array(await slice.arrayBuffer());
+      if (buf.length >= 5) {
+        return PDF_MAGIC.every((byte, i) => buf[i] === byte);
+      }
+    } catch {
+      // arrayBuffer() may fail on an empty blob or in restrictive
+      // environments – fall through to false.
+    }
+
+    return false;
+  },
+
+  async render(file: Blob, opts: RenderOptions): Promise<HTMLCanvasElement> {
+    throwIfAborted(opts.signal);
+    const arrayBuffer = await file.arrayBuffer();
+    throwIfAborted(opts.signal);
+    return renderPdf({ data: new Uint8Array(arrayBuffer) }, opts);
+  },
+
+  // Streaming path: hand pdf.js the URL so it range-requests only the xref +
+  // first-page chunks instead of the library downloading the whole document.
+  async renderFromURL(url: string, opts: RenderOptions): Promise<HTMLCanvasElement> {
+    return renderPdf({ url }, opts);
   },
 };
 

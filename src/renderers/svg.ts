@@ -1,5 +1,6 @@
 import type { Renderer, RenderOptions } from "../types";
 import { renderToCanvas } from "../canvas";
+import { abortError, throwIfAborted } from "../abort";
 
 const svg: Renderer = {
   name: "svg",
@@ -12,15 +13,29 @@ const svg: Renderer = {
   },
 
   async render(file: Blob, opts: RenderOptions): Promise<HTMLCanvasElement> {
+    throwIfAborted(opts.signal);
+    const { signal } = opts;
     const url = URL.createObjectURL(file);
     try {
       const img = new Image();
       await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error("SVG load failed"));
+        const onAbort = () => {
+          img.src = ""; // stop the load
+          reject(abortError(signal));
+        };
+        img.onload = () => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        };
+        img.onerror = () => {
+          signal?.removeEventListener("abort", onAbort);
+          reject(new Error("SVG load failed"));
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
         img.src = url;
       });
 
+      throwIfAborted(signal);
       const srcW = img.naturalWidth || opts.width;
       const srcH = img.naturalHeight || opts.width;
       const targetH = opts.height ?? Math.round(srcH * (opts.width / srcW));
