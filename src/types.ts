@@ -89,10 +89,16 @@ export interface Renderer {
    * Produce an `HTMLCanvasElement` (or compatible) with the thumbnail
    * drawn at the requested dimensions.
    *
+   * Return `null` to *decline* after matching — e.g. an ODF document with no
+   * embedded thumbnail, an encrypted PDF, or a video with no decodable frame.
+   * The pipeline then continues to the next renderer, ultimately falling back
+   * to the type icon. Reserve `null` for a clean "nothing to render"; `throw`
+   * for an unexpected failure so real bugs stay visible.
+   *
    * Renderers should honor `opts.signal` and reject with the signal's
    * reason (an `AbortError` DOMException by default) as early as possible.
    */
-  render: (file: Blob, opts: RenderOptions) => Promise<HTMLCanvasElement>;
+  render: (file: Blob, opts: RenderOptions) => Promise<HTMLCanvasElement | null>;
   /**
    * Optional streaming path: render directly from a URL without the
    * library pre-downloading the whole file. When `thumbnail()` receives a
@@ -103,8 +109,10 @@ export interface Renderer {
    *
    * The response must be CORS-readable (or same-origin), otherwise the
    * canvas taints and `'blob'`/`'dataurl'` outputs throw a SecurityError.
+   *
+   * Like `render`, may return `null` to decline and fall through.
    */
-  renderFromURL?: (url: string, opts: RenderOptions) => Promise<HTMLCanvasElement>;
+  renderFromURL?: (url: string, opts: RenderOptions) => Promise<HTMLCanvasElement | null>;
 }
 
 /** Accepted input types for `thumbnail()`. */

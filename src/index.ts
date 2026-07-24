@@ -13,6 +13,7 @@ import pdfRenderer from "./renderers/pdf";
 import imageRenderer from "./renderers/image";
 import svgRenderer from "./renderers/svg";
 import videoRenderer from "./renderers/video";
+import odfRenderer from "./renderers/odf";
 import textRenderer from "./renderers/text";
 import { renderFallback } from "./renderers/fallback";
 
@@ -35,6 +36,7 @@ const defaults: Renderer[] = [
   svgRenderer,
   imageRenderer,
   videoRenderer,
+  odfRenderer,
   textRenderer,
 ];
 const renderers: Renderer[] = [...defaults];
@@ -155,7 +157,7 @@ async function renderSource(
   renderer: Renderer,
   source: ResolvedSource,
   opts: RenderOptions,
-): Promise<HTMLCanvasElement> {
+): Promise<HTMLCanvasElement | null> {
   if (source.blob) return renderer.render(source.blob, opts);
   if (renderer.renderFromURL) return renderer.renderFromURL(source.url!, opts);
   const blob = await fetchFull(source.url!, opts.signal);
@@ -183,7 +185,7 @@ async function thumbnailImpl<F extends ThumbnailFormat = "blob">(
   // raceWithAbort guarantees thumbnail() rejects promptly on abort even
   // where the underlying work can't be cancelled (decode, encode, or a
   // custom renderer that ignores opts.signal).
-  let canvas: HTMLCanvasElement | undefined;
+  let canvas: HTMLCanvasElement | null = null;
   for (const renderer of renderers) {
     throwIfAborted(signal);
     if (await renderer.test(source.probe)) {
@@ -191,7 +193,9 @@ async function thumbnailImpl<F extends ThumbnailFormat = "blob">(
         renderSource(renderer, source, renderOpts),
         signal,
       );
-      break;
+      // A renderer may match but decline (return null) — e.g. an ODF with no
+      // embedded thumbnail; keep looking, and ultimately fall back to the icon.
+      if (canvas) break;
     }
   }
   // The fallback icon needs only the detected type — for URL inputs that's
