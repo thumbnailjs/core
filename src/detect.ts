@@ -126,6 +126,10 @@ const EXT_MAP: Record<string, Omit<FileSignature, 'family'> & { family: FileSign
     ext: 'pptx',
     family: 'presentation',
   },
+  odt:  { mime: 'application/vnd.oasis.opendocument.text',         ext: 'odt',  family: 'document' },
+  ods:  { mime: 'application/vnd.oasis.opendocument.spreadsheet',  ext: 'ods',  family: 'spreadsheet' },
+  odp:  { mime: 'application/vnd.oasis.opendocument.presentation', ext: 'odp',  family: 'presentation' },
+  epub: { mime: 'application/epub+zip',                            ext: 'epub', family: 'document' },
 };
 
 // ---- MIME string → signature (used when magic bytes fail) -----------------
@@ -184,6 +188,34 @@ function classifyOle2(blob: Blob): FileSignature {
 
   // Unidentifiable compound file — most are Office documents.
   return { mime: 'application/x-ole-storage', ext: '', family: 'document' };
+}
+
+/**
+ * ODF and EPUB packages are ZIPs whose first entry is an uncompressed file
+ * named "mimetype" holding the package MIME string. That's a reliable ~40-byte
+ * magic, read straight from the fixed local-header offset rather than by
+ * parsing the archive.
+ */
+async function checkOdf(blob: Blob): Promise<FileSignature | null> {
+  const head = new Uint8Array(await blob.slice(0, 100).arrayBuffer());
+  // Need a full local header (30 B) plus the 8-byte "mimetype" name to read.
+  if (head.length < 38) return null;
+  if (!matchesAt(head, [0x50, 0x4b, 0x03, 0x04])) return null;
+  const dv = new DataView(head.buffer, head.byteOffset, head.byteLength);
+  const fnLen = dv.getUint16(26, true);
+  const extraLen = dv.getUint16(28, true);
+  if (asciiSlice(head, 30, 30 + fnLen) !== 'mimetype') return null;
+
+  const mime = asciiSlice(head, 30 + fnLen + extraLen, head.length);
+  if (mime.startsWith('application/vnd.oasis.opendocument.text'))
+    return { mime: 'application/vnd.oasis.opendocument.text', ext: 'odt', family: 'document' };
+  if (mime.startsWith('application/vnd.oasis.opendocument.spreadsheet'))
+    return { mime: 'application/vnd.oasis.opendocument.spreadsheet', ext: 'ods', family: 'spreadsheet' };
+  if (mime.startsWith('application/vnd.oasis.opendocument.presentation'))
+    return { mime: 'application/vnd.oasis.opendocument.presentation', ext: 'odp', family: 'presentation' };
+  if (mime.startsWith('application/epub+zip'))
+    return { mime: 'application/epub+zip', ext: 'epub', family: 'document' };
+  return null;
 }
 
 // ---- SVG detection (text-based) -------------------------------------------
@@ -280,8 +312,10 @@ export async function detect(file: Blob): Promise<FileSignature> {
     return { mime: 'application/rtf', ext: 'rtf', family: 'document' };
   }
 
-  // ---- ZIP (and Office Open XML): 50 4B 03 04 ---------------------------
+  // ---- ZIP (Office Open XML, ODF, EPUB): 50 4B 03 04 --------------------
   if (matchesAt(bytes, [0x50, 0x4B, 0x03, 0x04])) {
+    const odf = await checkOdf(file);
+    if (odf) return odf;
     return classifyZip(file);
   }
 
