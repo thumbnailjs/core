@@ -13,6 +13,7 @@ import pdfRenderer from "./renderers/pdf";
 import imageRenderer from "./renderers/image";
 import svgRenderer from "./renderers/svg";
 import videoRenderer from "./renderers/video";
+import textRenderer from "./renderers/text";
 import { renderFallback } from "./renderers/fallback";
 
 export type {
@@ -34,6 +35,7 @@ const defaults: Renderer[] = [
   svgRenderer,
   imageRenderer,
   videoRenderer,
+  textRenderer,
 ];
 const renderers: Renderer[] = [...defaults];
 
