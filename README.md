@@ -17,7 +17,8 @@ const blob = await thumbnail(file);
 img.src = URL.createObjectURL(blob);
 ```
 
-Works out of the box for images, video, SVG, and PDF. Three lines.
+Works out of the box for images, video, SVG, PDF, text, and Office/ODF
+documents. Three lines.
 
 ## Options
 
@@ -162,6 +163,8 @@ Whether this engine's canvas encoder supports a MIME type (memoized probe).
 | SVG | `image/svg+xml` MIME type or `<svg` / `<?xml` content sniffing |
 | Images | Any `image/*` MIME type (PNG, JPEG, GIF, WebP, BMP, etc.) |
 | Video | Magic-byte detection for MP4, WebM, AVI, MOV, etc. |
+| Text | `text/*` MIME or a text extension (txt, md, csv, json, log, source code, …). Renders the file's first lines as a monospaced page, decoding UTF-8/UTF-16/Windows-1252. Gated on a positive text signal, so binary files are never mis-rendered. For URL inputs only the head is range-fetched. |
+| Office / ODF | OpenDocument (odt/ods/odp) and Office Open XML (docx/pptx/xlsx). Extracts the preview embedded in the package — ODF's `Thumbnails/thumbnail.png`, or `docProps/thumbnail.*` — with a dependency-free native unzip. A document with no embedded thumbnail falls through to the type icon. |
 | Unknown | Fallback icon with file-type label and colour-coded background |
 
 ## License
