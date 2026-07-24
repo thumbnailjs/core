@@ -107,6 +107,10 @@ const EXT_MAP: Record<string, Omit<FileSignature, 'family'> & { family: FileSign
   webm: { mime: 'video/webm',      ext: 'webm', family: 'video' },
   avi:  { mime: 'video/x-msvideo', ext: 'avi',  family: 'video' },
   mov:  { mime: 'video/quicktime',  ext: 'mov',  family: 'video' },
+  doc:  { mime: 'application/msword',            ext: 'doc',  family: 'document' },
+  xls:  { mime: 'application/vnd.ms-excel',      ext: 'xls',  family: 'spreadsheet' },
+  ppt:  { mime: 'application/vnd.ms-powerpoint',  ext: 'ppt',  family: 'presentation' },
+  rtf:  { mime: 'application/rtf',               ext: 'rtf',  family: 'document' },
   docx: {
     mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     ext: 'docx',
@@ -156,6 +160,30 @@ function classifyZip(blob: Blob): FileSignature {
 
   // Generic ZIP
   return { mime: 'application/zip', ext: 'zip', family: 'unknown' };
+}
+
+/**
+ * OLE2 / CFB compound files (D0 CF 11 E0 …) back the legacy Office formats,
+ * but the container magic is shared across .doc / .xls / .ppt, so the specific
+ * type can only come from the blob's MIME or File name. Falls back to the
+ * generic "document" family — the common case, and the least-wrong colour —
+ * when neither is available.
+ */
+function classifyOle2(blob: Blob): FileSignature {
+  const blobType = blob.type?.toLowerCase() ?? '';
+  if (blobType && MIME_MAP[blobType]) {
+    return { ...MIME_MAP[blobType] };
+  }
+
+  if ('name' in blob && typeof (blob as File).name === 'string') {
+    const ext = extFromName((blob as File).name);
+    if (ext === 'doc' || ext === 'dot') return { ...EXT_MAP.doc };
+    if (ext === 'xls' || ext === 'xlt') return { ...EXT_MAP.xls };
+    if (ext === 'ppt' || ext === 'pps' || ext === 'pot') return { ...EXT_MAP.ppt };
+  }
+
+  // Unidentifiable compound file — most are Office documents.
+  return { mime: 'application/x-ole-storage', ext: '', family: 'document' };
 }
 
 // ---- SVG detection (text-based) -------------------------------------------
@@ -247,9 +275,19 @@ export async function detect(file: Blob): Promise<FileSignature> {
     return { mime: 'application/pdf', ext: 'pdf', family: 'document' };
   }
 
+  // ---- RTF: 7B 5C 72 74 66 ({\rtf) --------------------------------------
+  if (matchesAt(bytes, [0x7b, 0x5c, 0x72, 0x74, 0x66])) {
+    return { mime: 'application/rtf', ext: 'rtf', family: 'document' };
+  }
+
   // ---- ZIP (and Office Open XML): 50 4B 03 04 ---------------------------
   if (matchesAt(bytes, [0x50, 0x4B, 0x03, 0x04])) {
     return classifyZip(file);
+  }
+
+  // ---- OLE2 / CFB (legacy Office): D0 CF 11 E0 A1 B1 1A E1 --------------
+  if (matchesAt(bytes, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) {
+    return classifyOle2(file);
   }
 
   // ---- ISO base media / ftyp family (MP4, MOV, AVIF) --------------------
