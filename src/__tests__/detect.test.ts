@@ -503,3 +503,52 @@ describe("detect()", () => {
     });
   });
 });
+
+// ---- legacy Office (OLE2/CFB) and RTF -------------------------------------
+
+describe("detect() — legacy Office & RTF", () => {
+  // Shared OLE2/CFB compound-file signature; the type is disambiguated by the
+  // File name or MIME, not the magic.
+  const OLE2 = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+
+  it("classifies an OLE2 .doc as a document", async () => {
+    const sig = await detect(file(OLE2, "report.doc"));
+    expect(sig.ext).toBe("doc");
+    expect(sig.family).toBe("document");
+  });
+
+  it("classifies an OLE2 .xls as a spreadsheet", async () => {
+    const sig = await detect(file(OLE2, "budget.xls"));
+    expect(sig.ext).toBe("xls");
+    expect(sig.family).toBe("spreadsheet");
+  });
+
+  it("classifies an OLE2 .ppt as a presentation", async () => {
+    const sig = await detect(file(OLE2, "deck.ppt"));
+    expect(sig.ext).toBe("ppt");
+    expect(sig.family).toBe("presentation");
+  });
+
+  it("uses the MIME type when the file is unnamed (no 'MSWORD' label wart)", async () => {
+    const sig = await detect(blob(OLE2, "application/msword"));
+    expect(sig.ext).toBe("doc");
+    expect(sig.family).toBe("document");
+  });
+
+  it("falls back to the document family for an unidentifiable OLE2 blob", async () => {
+    const sig = await detect(blob(OLE2));
+    expect(sig.family).toBe("document");
+  });
+
+  it("detects RTF from its magic bytes", async () => {
+    const sig = await detect(blob(ascii("{\\rtf1\\ansi\\deff0")));
+    expect(sig.mime).toBe("application/rtf");
+    expect(sig.ext).toBe("rtf");
+    expect(sig.family).toBe("document");
+  });
+
+  it("detects RTF regardless of extension/MIME (magic wins)", async () => {
+    const sig = await detect(file(ascii("{\\rtf1"), "note.txt", "text/plain"));
+    expect(sig.family).toBe("document");
+  });
+});

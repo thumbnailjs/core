@@ -21,6 +21,7 @@ const MIME: Record<string, string> = {
   ".bmp": "image/bmp",
   ".svg": "image/svg+xml",
   ".mjs": "text/javascript",
+  ".txt": "text/plain",
 };
 
 let server: Server | null = null;

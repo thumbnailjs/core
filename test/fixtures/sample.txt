@@ -1,0 +1,10 @@
+thumbnailjs text preview fixture
+================================
+
+The text renderer draws the first lines of a file onto a canvas, so a plain
+text file previews as itself instead of a generic coloured icon.
+
+  indented code-like line { key: value }
+  another line with numbers 1234567890
+
+End of sample.
